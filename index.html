@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRPO Bipedal Walker</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:11px/1.4 system-ui;background:#111;color:#eee;display:flex;height:100vh}
+#sim{flex:1;min-width:0;background:#1a2a1a}
+#panel{width:260px;background:#1a1a2e;padding:6px;overflow-y:auto;flex-shrink:0}
+.sec{background:#252545;padding:5px;border-radius:4px;margin-bottom:5px}
+.sec h3{font-size:9px;color:#8af;margin-bottom:3px;border-bottom:1px solid #446}
+.row{display:flex;align-items:center;gap:4px;margin:2px 0}
+.row label{flex:1;font-size:9px}
+.row input{width:55px}
+.row span{width:32px;text-align:right;font-size:8px;color:#aef}
+button{background:#4a5;border:0;color:#fff;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:10px;margin:2px}
+button:hover{filter:brightness(1.2)}
+button.stop{background:#a45}
+#log{background:#111;padding:3px;font:8px/1.2 monospace;height:60px;overflow-y:auto;border-radius:3px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;font-size:8px}
+.grid div{background:#1a1a3a;padding:2px;border-radius:2px;text-align:center}
+canvas{display:block;width:100%;height:100%}
+#chart{background:#111;border-radius:3px}
+</style>
+</head>
+<body>
+<canvas id="sim"></canvas>
+<div id="panel">
+<div class="sec">
+<h3>制御</h3>
+<button id="btnTrain">学習開始</button>
+<button id="btnTest">テスト</button>
+<button id="btnReset">リセット</button>
+<button id="btnSpeed">1x</button>
+<span id="workerStatus" style="color:#4f4;margin-left:5px">●Ready</span>
+</div>
+
+<div class="sec">
+<h3>GRPO</h3>
+<div class="row"><label>グループ</label><input type="range" id="groupSize" min="8" max="64" value="24"><span>24</span></div>
+<div class="row"><label>学習率</label><input type="range" id="lr" min="-4" max="-1" step="0.1" value="-2.5"><span>3e-3</span></div>
+<div class="row"><label>エントロピー</label><input type="range" id="entropy" min="0" max="0.1" step="0.005" value="0.02"><span>0.02</span></div>
+<div class="row"><label>EP長</label><input type="range" id="epLen" min="100" max="500" step="20" value="200"><span>200</span></div>
+</div>
+
+<div class="sec">
+<h3>報酬</h3>
+<div class="row"><label>前進</label><input type="range" id="rVel" min="0" max="5" step="0.1" value="2.5"><span>2.5</span></div>
+<div class="row"><label>姿勢</label><input type="range" id="rUp" min="0" max="3" step="0.1" value="1.5"><span>1.5</span></div>
+<div class="row"><label>高さ</label><input type="range" id="rH" min="0" max="2" step="0.1" value="0.8"><span>0.8</span></div>
+<div class="row"><label>効率</label><input type="range" id="rEff" min="0" max="0.3" step="0.01" value="0.03"><span>0.03</span></div>
+<div class="row"><label>転倒</label><input type="range" id="rFall" min="0" max="15" step="0.5" value="8"><span>8</span></div>
+</div>
+
+<div class="sec">
+<h3>物理</h3>
+<div class="row"><label>トルク</label><input type="range" id="torque" min="0.02" max="0.15" step="0.01" value="0.06"><span>0.06</span></div>
+<div class="row"><label>摩擦</label><input type="range" id="friction" min="0.5" max="1.5" step="0.1" value="1.0"><span>1.0</span></div>
+</div>
+
+<div class="sec">
+<h3>学習曲線</h3>
+<canvas id="chart" height="45"></canvas>
+</div>
+
+<div class="sec">
+<h3>状態(white) / 行動(cyan)</h3>
+<div class="grid" id="stateGrid"></div>
+</div>
+
+<div class="sec">
+<h3>モニター</h3>
+<div class="grid">
+<div>EP:<b id="mEp">0</b></div>
+<div>R:<b id="mR">0</b></div>
+<div>D:<b id="mD">0</b></div>
+<div>状態:<b id="mS">待機</b></div>
+<div>損失:<b id="mL">-</b></div>
+<div>FPS:<b id="mF">0</b></div>
+</div>
+</div>
+
+<div class="sec">
+<h3>ログ</h3>
+<div id="log"></div>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),P=id=>parseFloat($(id).value);
+const canvas=$('sim'),ctx=canvas.getContext('2d');
+
+// スライダー連動
+document.querySelectorAll('.row').forEach(row=>{
+const inp=row.querySelector('input'),sp=row.querySelector('span');
+if(!inp||!sp)return;
+inp.oninput=()=>{
+  let v=parseFloat(inp.value);
+  sp.textContent=inp.id==='lr'?`${Math.pow(10,v).toExponential(0)}`:v%1===0?v:v.toFixed(2);
+  sendParams();
+};
+inp.oninput();
+});
+
+// Matter.js
+const{Engine,Bodies,Body,Composite,Constraint,Vector}=Matter;
+
+// 人型二足歩行ロボット
+class Biped{
+  constructor(){
+    this.engine=Engine.create({gravity:{x:0,y:1}});
+    this.world=this.engine.world;
+    this.groundY=380;
+    this.build();
+  }
+  
+  build(){
+    Composite.clear(this.world);
+    const fr=P('friction'),x=200,gy=this.groundY;
+    
+    // 地面
+    this.ground=Bodies.rectangle(5000,gy+30,12000,60,{isStatic:true,friction:fr});
+    
+    // 頭
+    this.head=Bodies.circle(x,gy-145,12,{friction:fr,density:0.001,label:'head'});
+    
+    // 胴体（上半身）
+    this.torso=Bodies.rectangle(x,gy-115,24,45,{friction:fr,density:0.002,label:'torso'});
+    
+    // 腰
+    this.pelvis=Bodies.rectangle(x,gy-82,28,18,{friction:fr,density:0.002,label:'pelvis'});
+    
+    // 左脚
+    this.lThigh=Bodies.rectangle(x-8,gy-55,14,40,{friction:fr,density:0.0015,label:'lThigh'});
+    this.lShin=Bodies.rectangle(x-8,gy-18,12,38,{friction:fr,density:0.001,label:'lShin'});
+    this.lFoot=Bodies.rectangle(x-8,gy-2,22,6,{friction:fr*1.5,density:0.001,label:'lFoot'});
+    
+    // 右脚
+    this.rThigh=Bodies.rectangle(x+8,gy-55,14,40,{friction:fr,density:0.0015,label:'rThigh'});
+    this.rShin=Bodies.rectangle(x+8,gy-18,12,38,{friction:fr,density:0.001,label:'rShin'});
+    this.rFoot=Bodies.rectangle(x+8,gy-2,22,6,{friction:fr*1.5,density:0.001,label:'rFoot'});
+    
+    // 関節
+    const stiff=0.95;
+    this.neck=Constraint.create({bodyA:this.head,pointA:{x:0,y:10},bodyB:this.torso,pointB:{x:0,y:-20},stiffness:stiff,length:0});
+    this.spine=Constraint.create({bodyA:this.torso,pointA:{x:0,y:20},bodyB:this.pelvis,pointB:{x:0,y:-6},stiffness:stiff,length:0});
+    
+    this.lHip=Constraint.create({bodyA:this.pelvis,pointA:{x:-6,y:6},bodyB:this.lThigh,pointB:{x:0,y:-18},stiffness:stiff,length:0});
+    this.lKnee=Constraint.create({bodyA:this.lThigh,pointA:{x:0,y:18},bodyB:this.lShin,pointB:{x:0,y:-16},stiffness:stiff,length:0});
+    this.lAnkle=Constraint.create({bodyA:this.lShin,pointA:{x:0,y:16},bodyB:this.lFoot,pointB:{x:0,y:0},stiffness:stiff,length:0});
+    
+    this.rHip=Constraint.create({bodyA:this.pelvis,pointA:{x:6,y:6},bodyB:this.rThigh,pointB:{x:0,y:-18},stiffness:stiff,length:0});
+    this.rKnee=Constraint.create({bodyA:this.rThigh,pointA:{x:0,y:18},bodyB:this.rShin,pointB:{x:0,y:-16},stiffness:stiff,length:0});
+    this.rAnkle=Constraint.create({bodyA:this.rShin,pointA:{x:0,y:16},bodyB:this.rFoot,pointB:{x:0,y:0},stiffness:stiff,length:0});
+    
+    Composite.add(this.world,[
+      this.ground,this.head,this.torso,this.pelvis,
+      this.lThigh,this.lShin,this.lFoot,this.rThigh,this.rShin,this.rFoot,
+      this.neck,this.spine,this.lHip,this.lKnee,this.lAnkle,this.rHip,this.rKnee,this.rAnkle
+    ]);
+    
+    this.initX=x;
+    this.fallen=false;
+    this.steps=0;
+  }
+  
+  reset(){this.build();return this.getState();}
+  
+  getState(){
+    const t=this.torso,p=this.pelvis;
+    const h=(this.groundY-t.position.y)/100;
+    const vx=t.velocity.x/5,vy=t.velocity.y/5;
+    const ang=t.angle,angV=t.angularVelocity*2;
+    const pAng=p.angle;
+    
+    const lha=this.lThigh.angle-p.angle,lka=this.lShin.angle-this.lThigh.angle,laa=this.lFoot.angle;
+    const rha=this.rThigh.angle-p.angle,rka=this.rShin.angle-this.rThigh.angle,raa=this.rFoot.angle;
+    const lhv=this.lThigh.angularVelocity,lkv=this.lShin.angularVelocity;
+    const rhv=this.rThigh.angularVelocity,rkv=this.rShin.angularVelocity;
+    
+    const lc=this.lFoot.position.y>this.groundY-8?1:-1;
+    const rc=this.rFoot.position.y>this.groundY-8?1:-1;
+    
+    return[ang,angV,pAng,vx,vy,h,lc,rc,lha,lka,laa,lhv,lkv,rha,rka,raa,rhv,rkv];
+  }
+  
+  step(actions,params){
+    if(this.fallen)return{state:this.getState(),reward:-params.rFall,done:true};
+    
+    const tq=params.torque;
+    const[lh,lk,la,rh,rk,ra]=actions;
+    
+    Body.setAngularVelocity(this.lThigh,this.lThigh.angularVelocity+lh*tq);
+    Body.setAngularVelocity(this.lShin,this.lShin.angularVelocity+lk*tq);
+    Body.setAngularVelocity(this.lFoot,this.lFoot.angularVelocity+la*tq*0.5);
+    Body.setAngularVelocity(this.rThigh,this.rThigh.angularVelocity+rh*tq);
+    Body.setAngularVelocity(this.rShin,this.rShin.angularVelocity+rk*tq);
+    Body.setAngularVelocity(this.rFoot,this.rFoot.angularVelocity+ra*tq*0.5);
+    
+    Engine.update(this.engine,1000/60);
+    this.steps++;
+    
+    const state=this.getState();
+    const tooLow=this.torso.position.y>this.groundY-30;
+    const tooTilt=Math.abs(this.torso.angle)>1.3;
+    const headLow=this.head.position.y>this.groundY-40;
+    
+    if(tooLow||tooTilt||headLow){
+      this.fallen=true;
+      return{state,reward:-params.rFall,done:true};
+    }
+    
+    let r=0;
+    r+=this.torso.velocity.x*params.rVel;
+    r+=(1-Math.abs(this.torso.angle))*params.rUp*0.1;
+    r+=Math.min(1,(this.groundY-this.torso.position.y)/90)*params.rH*0.1;
+    r-=actions.reduce((s,a)=>s+a*a,0)*params.rEff;
+    r+=0.02;
+    
+    return{state,reward:r,done:false};
+  }
+  
+  dist(){return this.torso.position.x-this.initX;}
+  
+  render(ctx,w,h){
+    const camX=w/2-this.torso.position.x;
+    ctx.save();
+    ctx.translate(camX,0);
+    
+    // 地面
+    ctx.fillStyle='#2a3a2a';
+    ctx.fillRect(-2000,this.groundY,14000,100);
+    
+    // グリッド
+    ctx.strokeStyle='#3a4a3a';ctx.fillStyle='#555';ctx.font='9px monospace';
+    for(let x=Math.floor((this.torso.position.x-w)/100)*100;x<this.torso.position.x+w;x+=100){
+      ctx.beginPath();ctx.moveTo(x,this.groundY);ctx.lineTo(x,0);ctx.stroke();
+      ctx.fillText(x,x+2,this.groundY-3);
+    }
+    
+    const drawBody=(b,col)=>{
+      ctx.save();
+      ctx.translate(b.position.x,b.position.y);
+      ctx.rotate(b.angle);
+      ctx.fillStyle=col;
+      if(b.label==='head'){
+        ctx.beginPath();ctx.arc(0,0,b.circleRadius,0,Math.PI*2);ctx.fill();
+      }else{
+        const v=b.vertices,cx=b.position.x,cy=b.position.y;
+        ctx.beginPath();
+        ctx.moveTo(v[0].x-cx,v[0].y-cy);
+        for(let i=1;i<v.length;i++)ctx.lineTo(v[i].x-cx,v[i].y-cy);
+        ctx.closePath();ctx.fill();
+      }
+      ctx.restore();
+    };
+    
+    const c=this.fallen?'#833':'#48a';
+    drawBody(this.head,'#fa8');
+    drawBody(this.torso,c);
+    drawBody(this.pelvis,c);
+    drawBody(this.lThigh,'#c55');
+    drawBody(this.lShin,'#a66');
+    drawBody(this.lFoot,'#844');
+    drawBody(this.rThigh,'#5a5');
+    drawBody(this.rShin,'#6a6');
+    drawBody(this.rFoot,'#484');
+    
+    // 関節
+    [this.lHip,this.lKnee,this.lAnkle,this.rHip,this.rKnee,this.rAnkle].forEach(c=>{
+      const p=Vector.add(c.bodyA.position,Vector.rotate(c.pointA,c.bodyA.angle));
+      ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fillStyle='#ff0';ctx.fill();
+    });
+    
+    ctx.restore();
+  }
+}
+
+// メインスレッド用ポリシー
+let policy=null,biped=new Biped();
+let training=false,testing=false,speedMult=1;
+let episode=0,stepCount=0,totReward=0,lastLoss=0;
+let curActions=[0,0,0,0,0,0],rewardHistory=[];
+let lastT=performance.now(),fps=0;
+let bestTraj=null;
+
+function createPolicy(){
+  const m=tf.sequential();
+  m.add(tf.layers.dense({units:48,activation:'tanh',inputShape:[18],kernelInitializer:'glorotNormal'}));
+  m.add(tf.layers.dense({units:32,activation:'tanh'}));
+  m.add(tf.layers.dense({units:12})); // mean(6)+logStd(6)
+  return m;
+}
+policy=createPolicy();
+
+function getAction(state,explore=true){
+  return tf.tidy(()=>{
+    const out=policy.predict(tf.tensor2d([state]));
+    const[mean,logStd]=tf.split(out,2,1);
+    const std=tf.exp(tf.clipByValue(logStd,-2,0.5));
+    const m=mean.dataSync(),s=std.dataSync();
+    const a=[];
+    for(let i=0;i<6;i++){
+      let v=m[i];
+      if(explore)v+=randn()*s[i];
+      a.push(Math.max(-1,Math.min(1,v)));
+    }
+    return a;
+  });
+}
+function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+// Worker作成
+const workerCode=`
+importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0');
+importScripts('https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js');
+
+const{Engine,Bodies,Body,Composite,Constraint}=Matter;
+let policy=null,params={};
+
+class Biped{
+  constructor(p){
+    this.params=p;
+    this.engine=Engine.create({gravity:{x:0,y:1}});
+    this.world=this.engine.world;
+    this.groundY=380;
+    this.build();
+  }
+  build(){
+    Composite.clear(this.world);
+    const fr=this.params.friction||1,x=200,gy=this.groundY;
+    this.ground=Bodies.rectangle(5000,gy+30,12000,60,{isStatic:true,friction:fr});
+    this.head=Bodies.circle(x,gy-145,12,{friction:fr,density:0.001});
+    this.torso=Bodies.rectangle(x,gy-115,24,45,{friction:fr,density:0.002});
+    this.pelvis=Bodies.rectangle(x,gy-82,28,18,{friction:fr,density:0.002});
+    this.lThigh=Bodies.rectangle(x-8,gy-55,14,40,{friction:fr,density:0.0015});
+    this.lShin=Bodies.rectangle(x-8,gy-18,12,38,{friction:fr,density:0.001});
+    this.lFoot=Bodies.rectangle(x-8,gy-2,22,6,{friction:fr*1.5,density:0.001});
+    this.rThigh=Bodies.rectangle(x+8,gy-55,14,40,{friction:fr,density:0.0015});
+    this.rShin=Bodies.rectangle(x+8,gy-18,12,38,{friction:fr,density:0.001});
+    this.rFoot=Bodies.rectangle(x+8,gy-2,22,6,{friction:fr*1.5,density:0.001});
+    const st=0.95;
+    Composite.add(this.world,[
+      this.ground,this.head,this.torso,this.pelvis,
+      this.lThigh,this.lShin,this.lFoot,this.rThigh,this.rShin,this.rFoot,
+      Constraint.create({bodyA:this.head,pointA:{x:0,y:10},bodyB:this.torso,pointB:{x:0,y:-20},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.torso,pointA:{x:0,y:20},bodyB:this.pelvis,pointB:{x:0,y:-6},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.pelvis,pointA:{x:-6,y:6},bodyB:this.lThigh,pointB:{x:0,y:-18},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.lThigh,pointA:{x:0,y:18},bodyB:this.lShin,pointB:{x:0,y:-16},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.lShin,pointA:{x:0,y:16},bodyB:this.lFoot,pointB:{x:0,y:0},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.pelvis,pointA:{x:6,y:6},bodyB:this.rThigh,pointB:{x:0,y:-18},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.rThigh,pointA:{x:0,y:18},bodyB:this.rShin,pointB:{x:0,y:-16},stiffness:st,length:0}),
+      Constraint.create({bodyA:this.rShin,pointA:{x:0,y:16},bodyB:this.rFoot,pointB:{x:0,y:0},stiffness:st,length:0})
+    ]);
+    this.initX=x;this.fallen=false;
+  }
+  reset(){this.build();return this.getState();}
+  getState(){
+    const t=this.torso,p=this.pelvis,gy=this.groundY;
+    return[t.angle,t.angularVelocity*2,p.angle,t.velocity.x/5,t.velocity.y/5,(gy-t.position.y)/100,
+      this.lFoot.position.y>gy-8?1:-1,this.rFoot.position.y>gy-8?1:-1,
+      this.lThigh.angle-p.angle,this.lShin.angle-this.lThigh.angle,this.lFoot.angle,
+      this.lThigh.angularVelocity,this.lShin.angularVelocity,
+      this.rThigh.angle-p.angle,this.rShin.angle-this.rThigh.angle,this.rFoot.angle,
+      this.rThigh.angularVelocity,this.rShin.angularVelocity];
+  }
+  step(actions){
+    if(this.fallen)return{state:this.getState(),reward:-this.params.rFall,done:true};
+    const tq=this.params.torque,[lh,lk,la,rh,rk,ra]=actions;
+    Body.setAngularVelocity(this.lThigh,this.lThigh.angularVelocity+lh*tq);
+    Body.setAngularVelocity(this.lShin,this.lShin.angularVelocity+lk*tq);
+    Body.setAngularVelocity(this.lFoot,this.lFoot.angularVelocity+la*tq*0.5);
+    Body.setAngularVelocity(this.rThigh,this.rThigh.angularVelocity+rh*tq);
+    Body.setAngularVelocity(this.rShin,this.rShin.angularVelocity+rk*tq);
+    Body.setAngularVelocity(this.rFoot,this.rFoot.angularVelocity+ra*tq*0.5);
+    Engine.update(this.engine,1000/60);
+    const state=this.getState();
+    if(this.torso.position.y>this.groundY-30||Math.abs(this.torso.angle)>1.3||this.head.position.y>this.groundY-40){
+      this.fallen=true;return{state,reward:-this.params.rFall,done:true};
+    }
+    let r=this.torso.velocity.x*this.params.rVel+(1-Math.abs(this.torso.angle))*this.params.rUp*0.1;
+    r+=Math.min(1,(this.groundY-this.torso.position.y)/90)*this.params.rH*0.1;
+    r-=actions.reduce((s,a)=>s+a*a,0)*this.params.rEff+0.02;
+    return{state,reward:r,done:false};
+  }
+  dist(){return this.torso.position.x-this.initX;}
+}
+
+function randn(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+
+function createPolicy(){
+  const m=tf.sequential();
+  m.add(tf.layers.dense({units:48,activation:'tanh',inputShape:[18],kernelInitializer:'glorotNormal'}));
+  m.add(tf.layers.dense({units:32,activation:'tanh'}));
+  m.add(tf.layers.dense({units:12}));
+  return m;
+}
+
+function getActionWithInfo(state){
+  return tf.tidy(()=>{
+    const out=policy.predict(tf.tensor2d([state]));
+    const[mean,logStd]=tf.split(out,2,1);
+    const std=tf.exp(tf.clipByValue(logStd,-2,0.5));
+    const m=mean.dataSync(),s=std.dataSync();
+    const a=[];
+    for(let i=0;i<6;i++)a.push(Math.max(-1,Math.min(1,m[i]+randn()*s[i])));
+    return{actions:a,mean:[...m],std:[...s]};
+  });
+}
+
+function runEpisode(maxSteps){
+  const env=new Biped(params);
+  env.reset();
+  const traj=[];
+  let totR=0;
+  for(let t=0;t<maxSteps;t++){
+    const state=env.getState();
+    const{actions,mean,std}=getActionWithInfo(state);
+    const{reward,done}=env.step(actions);
+    totR+=reward;
+    traj.push({state,actions,mean,std});
+    if(done)break;
+  }
+  return{traj,totR,dist:env.dist()};
+}
+
+async function train(G,epLen,lr,ent){
+  const samples=[];
+  for(let i=0;i<G;i++)samples.push(runEpisode(epLen));
+  
+  const rewards=samples.map(s=>s.totR);
+  const mean=rewards.reduce((a,b)=>a+b,0)/G;
+  const std=Math.sqrt(rewards.reduce((a,b)=>a+(b-mean)**2,0)/G)+1e-8;
+  const advs=rewards.map(r=>(r-mean)/std);
+  
+  const states=[],actions=[],oldMeans=[],oldStds=[],advArr=[];
+  samples.forEach((s,idx)=>{
+    s.traj.forEach(t=>{
+      states.push(t.state);actions.push(t.actions);
+      oldMeans.push(t.mean);oldStds.push(t.std);
+      advArr.push(advs[idx]);
+    });
+  });
+  
+  if(!states.length)return{loss:0,avgR:0,bestR:0,bestTraj:[]};
+  
+  const opt=tf.train.adam(lr);
+  const loss=tf.tidy(()=>{
+    const stateT=tf.tensor2d(states),actionT=tf.tensor2d(actions);
+    const advT=tf.tensor1d(advArr),oldMeanT=tf.tensor2d(oldMeans),oldStdT=tf.tensor2d(oldStds);
+    return opt.minimize(()=>{
+      const out=policy.predict(stateT);
+      const[newMean,logStd]=tf.split(out,2,1);
+      const newStd=tf.exp(tf.clipByValue(logStd,-2,0.5));
+      const diff=tf.sub(actionT,newMean);
+      const logpNew=tf.sum(tf.sub(tf.mul(-0.5,tf.square(tf.div(diff,tf.add(newStd,1e-8)))),tf.log(tf.add(newStd,1e-8))),1);
+      const oldDiff=tf.sub(actionT,oldMeanT);
+      const logpOld=tf.sum(tf.sub(tf.mul(-0.5,tf.square(tf.div(oldDiff,tf.add(oldStdT,1e-8)))),tf.log(tf.add(oldStdT,1e-8))),1);
+      const ratio=tf.exp(tf.sub(logpNew,logpOld));
+      const clipped=tf.clipByValue(ratio,0.8,1.2);
+      const pLoss=tf.neg(tf.mean(tf.minimum(tf.mul(ratio,advT),tf.mul(clipped,advT))));
+      const entropyB=tf.mean(tf.sum(tf.log(tf.add(newStd,1e-8)),1));
+      return tf.add(pLoss,tf.mul(-ent,entropyB));
+    },true).dataSync()[0];
+  });
+  opt.dispose();
+  
+  const best=samples.reduce((a,b)=>a.totR>b.totR?a:b);
+  return{loss,avgR:mean,bestR:Math.max(...rewards),bestTraj:best.traj,bestDist:best.dist};
+}
+
+self.onmessage=async(e)=>{
+  const{type,data}=e.data;
+  if(type==='init'){
+    policy=createPolicy();
+    self.postMessage({type:'ready'});
+  }else if(type==='params'){
+    params=data;
+  }else if(type==='weights'){
+    const ws=data.map(w=>tf.tensor(w.data,w.shape));
+    policy.setWeights(ws);
+    self.postMessage({type:'weightsSet'});
+  }else if(type==='train'){
+    const{G,epLen,lr,ent}=data;
+    const res=await train(G,epLen,lr,ent);
+    const ws=policy.getWeights().map(w=>({data:Array.from(w.dataSync()),shape:w.shape}));
+    self.postMessage({type:'trained',data:{...res,weights:ws}});
+  }else if(type==='getWeights'){
+    const ws=policy.getWeights().map(w=>({data:Array.from(w.dataSync()),shape:w.shape}));
+    self.postMessage({type:'weights',data:ws});
+  }
+};
+`;
+
+const blob=new Blob([workerCode],{type:'application/javascript'});
+const worker=new Worker(URL.createObjectURL(blob));
+let workerReady=false;
+
+worker.onmessage=(e)=>{
+  const{type,data}=e.data;
+  if(type==='ready'){
+    workerReady=true;
+    $('workerStatus').textContent='●Ready';
+    $('workerStatus').style.color='#4f4';
+    syncWeightsToWorker();
+  }else if(type==='trained'){
+    lastLoss=data.loss;
+    rewardHistory.push(data.avgR);
+    if(rewardHistory.length>100)rewardHistory.shift();
+    bestTraj=data.bestTraj;
+    episode++;
+    
+    // 重みを同期
+    const ws=data.weights.map(w=>tf.tensor(w.data,w.shape));
+    policy.setWeights(ws);
+    ws.forEach(w=>w.dispose());
+    
+    log(`EP${episode}: avg=${data.avgR.toFixed(1)} best=${data.bestR.toFixed(1)} d=${data.bestDist?.toFixed(0)||0}`);
+    drawChart();
+    
+    if(training)startTrainStep();
+  }else if(type==='weightsSet'){
+    $('workerStatus').textContent='●Synced';
+  }
+};
+
+function syncWeightsToWorker(){
+  const ws=policy.getWeights().map(w=>({data:Array.from(w.dataSync()),shape:w.shape}));
+  worker.postMessage({type:'weights',data:ws});
+}
+
+function sendParams(){
+  const p={
+    rVel:P('rVel'),rUp:P('rUp'),rH:P('rH'),rEff:P('rEff'),rFall:P('rFall'),
+    torque:P('torque'),friction:P('friction')
+  };
+  worker.postMessage({type:'params',data:p});
+}
+
+function startTrainStep(){
+  if(!training)return;
+  $('workerStatus').textContent='●Training';
+  $('workerStatus').style.color='#ff0';
+  worker.postMessage({type:'train',data:{
+    G:Math.round(P('groupSize')),
+    epLen:Math.round(P('epLen')),
+    lr:Math.pow(10,P('lr')),
+    ent:P('entropy')
+  }});
+}
+
+worker.postMessage({type:'init'});
+sendParams();
+
+// UI
+function log(m){const e=$('log');e.innerHTML=m+'<br>'+e.innerHTML.split('<br>').slice(0,15).join('<br>');}
+
+function updateUI(){
+  $('mEp').textContent=episode;
+  $('mR').textContent=totReward.toFixed(1);
+  $('mD').textContent=biped.dist().toFixed(0);
+  $('mS').textContent=training?'学習':testing?'テスト':biped.fallen?'転倒':'実行';
+  $('mL').textContent=lastLoss.toFixed(4);
+  $('mF').textContent=fps;
+  
+  const st=biped.getState();
+  const nm=['θ','ω','pθ','vx','vy','h','Lc','Rc','Lh','Lk','La','Lhv','Lkv','Rh','Rk','Ra','Rhv','Rkv'];
+  let html=st.map((v,i)=>`<div>${nm[i]}:${v.toFixed(1)}</div>`).join('');
+  html+=curActions.map((v,i)=>`<div style="color:#0ff">${['LH','LK','LA','RH','RK','RA'][i]}:${v.toFixed(2)}</div>`).join('');
+  $('stateGrid').innerHTML=html;
+}
+
+function drawChart(){
+  const c=$('chart'),cx=c.getContext('2d');
+  c.width=c.offsetWidth;c.height=45;
+  cx.fillStyle='#111';cx.fillRect(0,0,c.width,c.height);
+  if(rewardHistory.length<2)return;
+  const min=Math.min(...rewardHistory),max=Math.max(...rewardHistory),range=max-min||1;
+  cx.strokeStyle='#4f8';cx.lineWidth=1.5;cx.beginPath();
+  rewardHistory.forEach((r,i)=>{
+    const x=(i/(rewardHistory.length-1))*c.width;
+    const y=c.height-3-((r-min)/range)*(c.height-6);
+    i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+  });
+  cx.stroke();
+  cx.fillStyle='#aaa';cx.font='8px monospace';
+  cx.fillText(`${min.toFixed(0)}`,2,c.height-2);
+  cx.fillText(`${max.toFixed(0)}`,2,10);
+}
+
+function render(){
+  canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;
+  ctx.fillStyle='#1a2a1a';ctx.fillRect(0,0,canvas.width,canvas.height);
+  biped.render(ctx,canvas.width,canvas.height);
+  ctx.fillStyle='#fff';ctx.font='12px monospace';
+  ctx.fillText(`EP:${episode} R:${totReward.toFixed(1)} D:${biped.dist().toFixed(0)} Step:${stepCount}`,10,18);
+  if(training){ctx.fillStyle='#4f4';ctx.fillText('● LEARNING (Worker)',10,34);}
+  if(testing){ctx.fillStyle='#48f';ctx.fillText('● TESTING',10,34);}
+}
+
+function getParams(){
+  return{rVel:P('rVel'),rUp:P('rUp'),rH:P('rH'),rEff:P('rEff'),rFall:P('rFall'),torque:P('torque'),friction:P('friction')};
+}
+
+// メインループ
+let trajIdx=0;
+function mainLoop(){
+  const now=performance.now();
+  fps=Math.round(1000/(now-lastT));lastT=now;
+  
+  // ベスト軌跡再生モード
+  if(training&&bestTraj&&bestTraj.length>0){
+    if(trajIdx>=bestTraj.length||biped.fallen){
+      biped.reset();totReward=0;stepCount=0;trajIdx=0;
+    }
+    for(let i=0;i<speedMult&&trajIdx<bestTraj.length;i++){
+      const t=bestTraj[trajIdx++];
+      curActions=t.actions;
+      const{reward}=biped.step(t.actions,getParams());
+      totReward+=reward;stepCount++;
+    }
+  }else{
+    // 通常/テストモード
+    if(biped.fallen||stepCount>600){
+      biped.reset();totReward=0;stepCount=0;
+    }
+    for(let i=0;i<speedMult;i++){
+      const state=biped.getState();
+      const actions=getAction(state,!testing);
+      curActions=actions;
+      const{reward}=biped.step(actions,getParams());
+      totReward+=reward;stepCount++;
+      if(biped.fallen)break;
+    }
+  }
+  
+  render();updateUI();
+  requestAnimationFrame(mainLoop);
+}
+
+// ボタン
+$('btnTrain').onclick=()=>{
+  training=!training;testing=false;
+  $('btnTrain').textContent=training?'学習停止':'学習開始';
+  $('btnTrain').className=training?'stop':'';
+  $('btnTest').className='';
+  if(training){
+    biped.reset();stepCount=0;totReward=0;trajIdx=0;bestTraj=null;
+    sendParams();
+    syncWeightsToWorker();
+    setTimeout(startTrainStep,100);
+  }
+};
+
+$('btnTest').onclick=()=>{
+  testing=!testing;training=false;
+  $('btnTest').textContent=testing?'探索ON':'テスト';
+  $('btnTest').className=testing?'stop':'';
+  $('btnTrain').textContent='学習開始';$('btnTrain').className='';
+  biped.reset();stepCount=0;totReward=0;bestTraj=null;
+};
+
+$('btnReset').onclick=()=>{biped.reset();totReward=0;stepCount=0;trajIdx=0;};
+$('btnSpeed').onclick=()=>{speedMult=speedMult===1?3:speedMult===3?6:1;$('btnSpeed').textContent=speedMult+'x';};
+
+log('GRPO二足歩行 (Worker並列) 準備完了');
+mainLoop();
+</script>
+</body>
+</html>
