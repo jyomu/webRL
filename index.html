@@ -73,11 +73,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
 
-<!-- Worker script as text for blob creation -->
-<script id="workerScript" type="text/plain">
-// This content is loaded as a blob for the Web Worker
-// The actual worker code is in js/worker.js
-</script>
+<!-- Worker script content will be loaded dynamically -->
+<script id="workerScript" type="text/plain"></script>
 
 <!-- Application modules -->
 <script src="js/grpo.js"></script>
@@ -89,6 +86,8 @@
   try {
     const workerCode = await fetch('js/worker.js').then(r => r.text());
     document.getElementById('workerScript').textContent = workerCode;
+    // Dispatch event to signal worker code is ready
+    window.dispatchEvent(new Event('workerReady'));
   } catch (error) {
     console.error('Failed to load worker:', error);
   }

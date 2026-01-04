@@ -55,7 +55,6 @@ function initWorker() {
 }
 
 function setupWorkerHandlers() {
-
   worker.onmessage = (e) => {
   const { type, data } = e.data;
   if (type === 'ready') {
@@ -114,10 +113,12 @@ function startTrainStep() {
   });
 }
 
-// Initialize worker when document is ready
-if (document.getElementById('workerScript').textContent.trim().length > 100) {
-  initWorker();
-}
+// Initialize worker when script tag is populated with content
+window.addEventListener('workerReady', () => {
+  if (document.getElementById('workerScript').textContent.trim().length > 100) {
+    initWorker();
+  }
+});
 
 // UI Functions
 function log(m) {

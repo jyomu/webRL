@@ -1,6 +1,13 @@
 /**
  * Web Worker for parallel GRPO training
  * Runs training episodes in the background
+ * 
+ * Note: This file contains some code duplication with js/grpo.js and js/environment.js
+ * This is intentional as Web Workers run in isolation and cannot easily import ES6 modules.
+ * The duplicated code includes:
+ * - Biped class (simplified version without rendering)
+ * - randn() function
+ * - createPolicy() function
  */
 
 importScripts('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0');
