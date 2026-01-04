@@ -106,13 +106,13 @@ class Biped {
     const tq = params.torque;
     const [lh, lk, la, rh, rk, ra] = actions;
 
-    // Apply torque with angular velocity damping to prevent unrealistic movements
-    const damping = 0.95;
-    const maxAngularVel = 0.5; // Limit angular velocity to prevent extreme rotations
+    // Physics constants for realistic joint behavior
+    const ANGULAR_VELOCITY_DAMPING = 0.95; // Smooths movements and prevents oscillation
+    const MAX_ANGULAR_VELOCITY = 0.5; // rad/s - Prevents unrealistic fast rotations
     
     const applyTorqueWithLimits = (body, action, multiplier = 1.0) => {
-      let newAngVel = body.angularVelocity * damping + action * tq * multiplier;
-      newAngVel = Math.max(-maxAngularVel, Math.min(maxAngularVel, newAngVel));
+      let newAngVel = body.angularVelocity * ANGULAR_VELOCITY_DAMPING + action * tq * multiplier;
+      newAngVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
       Body.setAngularVelocity(body, newAngVel);
     };
     

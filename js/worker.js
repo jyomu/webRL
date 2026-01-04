@@ -83,13 +83,14 @@ class Biped {
     const tq = this.params.torque;
     const [lh, lk, la, rh, rk, ra] = actions;
     
-    // Apply torque with angular velocity damping to prevent unrealistic movements
-    const damping = 0.95;
-    const maxAngularVel = 0.5; // Limit angular velocity to prevent extreme rotations
+    // Physics constants for realistic joint behavior
+    // Note: Duplicated from environment.js since Web Workers run in isolation
+    const ANGULAR_VELOCITY_DAMPING = 0.95; // Smooths movements and prevents oscillation
+    const MAX_ANGULAR_VELOCITY = 0.5; // rad/s - Prevents unrealistic fast rotations
     
     const applyTorqueWithLimits = (body, action, multiplier = 1.0) => {
-      let newAngVel = body.angularVelocity * damping + action * tq * multiplier;
-      newAngVel = Math.max(-maxAngularVel, Math.min(maxAngularVel, newAngVel));
+      let newAngVel = body.angularVelocity * ANGULAR_VELOCITY_DAMPING + action * tq * multiplier;
+      newAngVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
       Body.setAngularVelocity(body, newAngVel);
     };
     
@@ -170,10 +171,14 @@ async function train(G, epLen, lr, ent) {
   const mean = rewards.reduce((a, b) => a + b, 0) / G;
   const std = Math.sqrt(rewards.reduce((a, b) => a + (b - mean) ** 2, 0) / G) + 1e-8;
   
-  // Improved advantage calculation with clipping to prevent extreme values
+  // Training stability constants
+  const ADVANTAGE_CLIP_RANGE = 10; // Prevents extreme gradient updates
+  const LOG_RATIO_CLIP_RANGE = 5; // Prevents numerical instabilities
+  
+  // Improved advantage calculation with clipping
   const advs = rewards.map(r => {
     const adv = (r - mean) / std;
-    return Math.max(-10, Math.min(10, adv)); // Clip advantages to [-10, 10]
+    return Math.max(-ADVANTAGE_CLIP_RANGE, Math.min(ADVANTAGE_CLIP_RANGE, adv));
   });
 
   const states = [], actions = [], oldMeans = [], oldStds = [], advArr = [];
@@ -204,7 +209,7 @@ async function train(G, epLen, lr, ent) {
       const logpNew = tf.sum(tf.sub(tf.mul(-0.5, tf.square(tf.div(diff, tf.add(newStd, 1e-8)))), tf.log(tf.add(newStd, 1e-8))), 1);
       const oldDiff = tf.sub(actionT, oldMeanT);
       const logpOld = tf.sum(tf.sub(tf.mul(-0.5, tf.square(tf.div(oldDiff, tf.add(oldStdT, 1e-8)))), tf.log(tf.add(oldStdT, 1e-8))), 1);
-      const ratio = tf.exp(tf.clipByValue(tf.sub(logpNew, logpOld), -5, 5)); // Clip log ratio to prevent extreme values
+      const ratio = tf.exp(tf.clipByValue(tf.sub(logpNew, logpOld), -LOG_RATIO_CLIP_RANGE, LOG_RATIO_CLIP_RANGE));
       const clipped = tf.clipByValue(ratio, 0.8, 1.2);
       const pLoss = tf.neg(tf.mean(tf.minimum(tf.mul(ratio, advT), tf.mul(clipped, advT))));
       const entropyB = tf.mean(tf.sum(tf.log(tf.add(newStd, 1e-8)), 1));
