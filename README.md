@@ -19,10 +19,13 @@ Simply open `index.html` in a modern web browser. No build step or dependencies 
 
 ## Architecture
 
+The codebase is organized into modular components for maintainability. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the project structure and design principles.
+
 - `index.html` - Main entry point with UI
 - `js/environment.js` - Environment simulation (Biped walker)
 - `js/grpo.js` - GRPO algorithm implementation
 - `js/worker.js` - Web Worker for parallel training
+- `js/app.js` - Application logic and UI coordination
 - `css/styles.css` - UI styling
 
 ## Technologies
