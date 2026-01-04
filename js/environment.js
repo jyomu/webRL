@@ -106,23 +106,61 @@ class Biped {
     const tq = params.torque;
     const [lh, lk, la, rh, rk, ra] = actions;
 
+    // Get physics mode from params (default to 'direct' for backward compatibility)
+    const physicsMode = params.physicsMode || 'direct';
+    
     // Apply torque with gentle limits to prevent extreme movements while maintaining natural motion
     const MAX_ANGULAR_VELOCITY = 0.5; // rad/s - Prevents unrealistic fast rotations
     
-    const applyTorqueWithLimit = (body, action, multiplier = 1.0) => {
-      // Calculate new angular velocity (similar to original but with limits)
-      const newAngVel = body.angularVelocity + action * tq * multiplier;
-      // Clamp to prevent extreme rotations
-      const clampedVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
-      Body.setAngularVelocity(body, clampedVel);
-    };
-    
-    applyTorqueWithLimit(this.lThigh, lh);
-    applyTorqueWithLimit(this.lShin, lk);
-    applyTorqueWithLimit(this.lFoot, la, 0.5);
-    applyTorqueWithLimit(this.rThigh, rh);
-    applyTorqueWithLimit(this.rShin, rk);
-    applyTorqueWithLimit(this.rFoot, ra, 0.5);
+    if (physicsMode === 'force') {
+      // Force-based mode: Apply forces at constraint points for more realistic joint rotation
+      const applyForceAtJoint = (body, action, jointPoint, multiplier = 1.0) => {
+        // Calculate perpendicular force direction for rotation
+        const angle = body.angle + Math.PI / 2;
+        const forceDirection = { x: Math.cos(angle), y: Math.sin(angle) };
+        const forceMagnitude = action * tq * multiplier * 0.001; // Scale down for force-based
+        
+        // Apply force at joint point offset from center
+        const forcePoint = {
+          x: body.position.x + jointPoint.x * Math.cos(body.angle) - jointPoint.y * Math.sin(body.angle),
+          y: body.position.y + jointPoint.x * Math.sin(body.angle) + jointPoint.y * Math.cos(body.angle)
+        };
+        
+        Body.applyForce(body, forcePoint, {
+          x: forceDirection.x * forceMagnitude,
+          y: forceDirection.y * forceMagnitude
+        });
+        
+        // Still apply velocity limit
+        if (Math.abs(body.angularVelocity) > MAX_ANGULAR_VELOCITY) {
+          Body.setAngularVelocity(body, Math.sign(body.angularVelocity) * MAX_ANGULAR_VELOCITY);
+        }
+      };
+      
+      // Apply forces at joint attachment points
+      applyForceAtJoint(this.lThigh, lh, { x: 0, y: -18 });
+      applyForceAtJoint(this.lShin, lk, { x: 0, y: -16 });
+      applyForceAtJoint(this.lFoot, la, { x: 0, y: 0 }, 0.5);
+      applyForceAtJoint(this.rThigh, rh, { x: 0, y: -18 });
+      applyForceAtJoint(this.rShin, rk, { x: 0, y: -16 });
+      applyForceAtJoint(this.rFoot, ra, { x: 0, y: 0 }, 0.5);
+    } else {
+      // Direct mode (default): Direct angular velocity manipulation
+      const applyTorqueWithLimit = (body, action, multiplier = 1.0) => {
+        // Calculate new angular velocity (similar to original but with limits)
+        const newAngVel = body.angularVelocity + action * tq * multiplier;
+        // Clamp to prevent extreme rotations
+        const clampedVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
+        Body.setAngularVelocity(body, clampedVel);
+      };
+      
+      applyTorqueWithLimit(this.lThigh, lh);
+      applyTorqueWithLimit(this.lShin, lk);
+      applyTorqueWithLimit(this.lFoot, la, 0.5);
+      applyTorqueWithLimit(this.rThigh, rh);
+      applyTorqueWithLimit(this.rShin, rk);
+      applyTorqueWithLimit(this.rFoot, ra, 0.5);
+    }
 
     Engine.update(this.engine, 1000 / 60);
     this.steps++;
