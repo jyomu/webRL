@@ -130,7 +130,7 @@ class Biped {
     r += (1 - Math.abs(this.torso.angle)) * params.rUp * 0.1;
     r += Math.min(1, (this.groundY - this.torso.position.y) / 90) * params.rH * 0.1;
     r -= actions.reduce((s, a) => s + a * a, 0) * params.rEff;
-    r += 0.02;
+    r += 0.02; // Base reward to encourage survival
 
     return { state, reward: r, done: false };
   }
