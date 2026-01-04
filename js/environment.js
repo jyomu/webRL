@@ -42,18 +42,19 @@ class Biped {
     this.rShin = Bodies.rectangle(x + 8, gy - 18, 12, 38, { friction, density: 0.001, label: 'rShin' });
     this.rFoot = Bodies.rectangle(x + 8, gy - 2, 22, 6, { friction: friction * 1.5, density: 0.001, label: 'rFoot' });
 
-    // Joints
-    const stiff = 0.95;
-    this.neck = Constraint.create({ bodyA: this.head, pointA: { x: 0, y: 10 }, bodyB: this.torso, pointB: { x: 0, y: -20 }, stiffness: stiff, length: 0 });
-    this.spine = Constraint.create({ bodyA: this.torso, pointA: { x: 0, y: 20 }, bodyB: this.pelvis, pointB: { x: 0, y: -6 }, stiffness: stiff, length: 0 });
+    // Joints - Higher stiffness and damping to prevent joint disconnection
+    const stiff = 1.0;
+    const damp = 0.1;
+    this.neck = Constraint.create({ bodyA: this.head, pointA: { x: 0, y: 10 }, bodyB: this.torso, pointB: { x: 0, y: -20 }, stiffness: stiff, damping: damp, length: 0 });
+    this.spine = Constraint.create({ bodyA: this.torso, pointA: { x: 0, y: 20 }, bodyB: this.pelvis, pointB: { x: 0, y: -6 }, stiffness: stiff, damping: damp, length: 0 });
 
-    this.lHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: -6, y: 6 }, bodyB: this.lThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, length: 0 });
-    this.lKnee = Constraint.create({ bodyA: this.lThigh, pointA: { x: 0, y: 18 }, bodyB: this.lShin, pointB: { x: 0, y: -16 }, stiffness: stiff, length: 0 });
-    this.lAnkle = Constraint.create({ bodyA: this.lShin, pointA: { x: 0, y: 16 }, bodyB: this.lFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, length: 0 });
+    this.lHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: -6, y: 6 }, bodyB: this.lThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, damping: damp, length: 0 });
+    this.lKnee = Constraint.create({ bodyA: this.lThigh, pointA: { x: 0, y: 18 }, bodyB: this.lShin, pointB: { x: 0, y: -16 }, stiffness: stiff, damping: damp, length: 0 });
+    this.lAnkle = Constraint.create({ bodyA: this.lShin, pointA: { x: 0, y: 16 }, bodyB: this.lFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, damping: damp, length: 0 });
 
-    this.rHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: 6, y: 6 }, bodyB: this.rThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, length: 0 });
-    this.rKnee = Constraint.create({ bodyA: this.rThigh, pointA: { x: 0, y: 18 }, bodyB: this.rShin, pointB: { x: 0, y: -16 }, stiffness: stiff, length: 0 });
-    this.rAnkle = Constraint.create({ bodyA: this.rShin, pointA: { x: 0, y: 16 }, bodyB: this.rFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, length: 0 });
+    this.rHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: 6, y: 6 }, bodyB: this.rThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, damping: damp, length: 0 });
+    this.rKnee = Constraint.create({ bodyA: this.rThigh, pointA: { x: 0, y: 18 }, bodyB: this.rShin, pointB: { x: 0, y: -16 }, stiffness: stiff, damping: damp, length: 0 });
+    this.rAnkle = Constraint.create({ bodyA: this.rShin, pointA: { x: 0, y: 16 }, bodyB: this.rFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, damping: damp, length: 0 });
 
     Composite.add(this.world, [
       this.ground, this.head, this.torso, this.pelvis,
@@ -105,12 +106,22 @@ class Biped {
     const tq = params.torque;
     const [lh, lk, la, rh, rk, ra] = actions;
 
-    Body.setAngularVelocity(this.lThigh, this.lThigh.angularVelocity + lh * tq);
-    Body.setAngularVelocity(this.lShin, this.lShin.angularVelocity + lk * tq);
-    Body.setAngularVelocity(this.lFoot, this.lFoot.angularVelocity + la * tq * 0.5);
-    Body.setAngularVelocity(this.rThigh, this.rThigh.angularVelocity + rh * tq);
-    Body.setAngularVelocity(this.rShin, this.rShin.angularVelocity + rk * tq);
-    Body.setAngularVelocity(this.rFoot, this.rFoot.angularVelocity + ra * tq * 0.5);
+    // Apply torque with angular velocity damping to prevent unrealistic movements
+    const damping = 0.95;
+    const maxAngularVel = 0.5; // Limit angular velocity to prevent extreme rotations
+    
+    const applyTorqueWithLimits = (body, action, multiplier = 1.0) => {
+      let newAngVel = body.angularVelocity * damping + action * tq * multiplier;
+      newAngVel = Math.max(-maxAngularVel, Math.min(maxAngularVel, newAngVel));
+      Body.setAngularVelocity(body, newAngVel);
+    };
+    
+    applyTorqueWithLimits(this.lThigh, lh);
+    applyTorqueWithLimits(this.lShin, lk);
+    applyTorqueWithLimits(this.lFoot, la, 0.5);
+    applyTorqueWithLimits(this.rThigh, rh);
+    applyTorqueWithLimits(this.rShin, rk);
+    applyTorqueWithLimits(this.rFoot, ra, 0.5);
 
     Engine.update(this.engine, 1000 / 60);
     this.steps++;
