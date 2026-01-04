@@ -100,7 +100,14 @@ function setupWorkerHandlers() {
   
   worker.onerror = (error) => {
     console.error('Worker error:', error);
-    log('❌ Worker error: ' + error.message);
+    const errorMsg = error.message || 'Unknown error';
+    if (errorMsg.includes('importScripts') || errorMsg.includes('CDN') || errorMsg.includes('jsdelivr')) {
+      log('❌ Worker failed: CDN blocked');
+      log('ℹ️ TensorFlow.js and Matter.js must load from CDN');
+      log('ℹ️ Check browser console, ad blockers, or network filters');
+    } else {
+      log('❌ Worker error: ' + errorMsg);
+    }
   };
   
   worker.onmessage = (e) => {
@@ -167,6 +174,12 @@ window.addEventListener('workerReady', () => {
     initWorker();
   }
 });
+
+// Also check immediately on load (in case event already fired)
+if (document.getElementById('workerScript') && 
+    document.getElementById('workerScript').textContent.trim().length > 100) {
+  initWorker();
+}
 
 // UI Functions
 function log(m) {

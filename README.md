@@ -17,6 +17,12 @@ This repository provides a browser-based environment for experimenting with rein
 
 Simply open `index.html` in a modern web browser. No build step or dependencies installation required.
 
+**Important**: The application requires TensorFlow.js and Matter.js to be loaded from CDN. If you see errors about CDN loading:
+- Check your ad blocker or content blocker settings
+- Ensure network/firewall allows `cdn.jsdelivr.net`
+- Try a different browser or incognito/private mode
+- Check browser console for specific error messages
+
 ### Development
 
 For development with type checking and linting:
