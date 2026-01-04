@@ -12,6 +12,10 @@ window.getParameter = P;
 const canvas = $('sim');
 const ctx = canvas.getContext('2d');
 
+// Worker must be declared before any code that might call sendParams()
+let worker = null;
+let workerReady = false;
+
 // Setup slider controls
 document.querySelectorAll('.row').forEach(row => {
   const inp = row.querySelector('input');
@@ -40,10 +44,6 @@ let rewardHistory = [];
 let lastT = performance.now();
 let fps = 0;
 let bestTraj = null;
-
-// Create and setup worker
-let worker = null;
-let workerReady = false;
 
 function initWorker() {
   const workerCode = document.getElementById('workerScript').textContent;
