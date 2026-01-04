@@ -1,0 +1,36 @@
+# webRL
+
+Web-based Reinforcement Learning experiments
+
+## Overview
+
+This repository provides a browser-based environment for experimenting with reinforcement learning algorithms. The current implementation features a bipedal walker controlled by GRPO (Group Relative Policy Optimization).
+
+## Features
+
+- **Pure Web-based**: Runs entirely in the browser, no server required
+- **Real-time Visualization**: Watch the agent learn in real-time
+- **Interactive Controls**: Adjust hyperparameters on the fly
+- **Worker-based Training**: Parallel training using Web Workers
+
+## Getting Started
+
+Simply open `index.html` in a modern web browser. No build step or dependencies installation required.
+
+## Architecture
+
+- `index.html` - Main entry point with UI
+- `js/environment.js` - Environment simulation (Biped walker)
+- `js/grpo.js` - GRPO algorithm implementation
+- `js/worker.js` - Web Worker for parallel training
+- `css/styles.css` - UI styling
+
+## Technologies
+
+- [TensorFlow.js](https://www.tensorflow.org/js) - Neural network and tensor operations
+- [Matter.js](https://brm.io/matter-js/) - 2D physics engine
+- Vanilla JavaScript - No framework dependencies
+
+## License
+
+MIT
