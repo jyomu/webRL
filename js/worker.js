@@ -83,23 +83,24 @@ class Biped {
     const tq = this.params.torque;
     const [lh, lk, la, rh, rk, ra] = actions;
     
-    // Physics constants for realistic joint behavior
+    // Apply torque with gentle limits to prevent extreme movements while maintaining natural motion
     // Note: Duplicated from environment.js since Web Workers run in isolation
-    const ANGULAR_VELOCITY_DAMPING = 0.95; // Smooths movements and prevents oscillation
     const MAX_ANGULAR_VELOCITY = 0.5; // rad/s - Prevents unrealistic fast rotations
     
-    const applyTorqueWithLimits = (body, action, multiplier = 1.0) => {
-      let newAngVel = body.angularVelocity * ANGULAR_VELOCITY_DAMPING + action * tq * multiplier;
-      newAngVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
-      Body.setAngularVelocity(body, newAngVel);
+    const applyTorqueWithLimit = (body, action, multiplier = 1.0) => {
+      // Calculate new angular velocity (similar to original but with limits)
+      const newAngVel = body.angularVelocity + action * tq * multiplier;
+      // Clamp to prevent extreme rotations
+      const clampedVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
+      Body.setAngularVelocity(body, clampedVel);
     };
     
-    applyTorqueWithLimits(this.lThigh, lh);
-    applyTorqueWithLimits(this.lShin, lk);
-    applyTorqueWithLimits(this.lFoot, la, 0.5);
-    applyTorqueWithLimits(this.rThigh, rh);
-    applyTorqueWithLimits(this.rShin, rk);
-    applyTorqueWithLimits(this.rFoot, ra, 0.5);
+    applyTorqueWithLimit(this.lThigh, lh);
+    applyTorqueWithLimit(this.lShin, lk);
+    applyTorqueWithLimit(this.lFoot, la, 0.5);
+    applyTorqueWithLimit(this.rThigh, rh);
+    applyTorqueWithLimit(this.rShin, rk);
+    applyTorqueWithLimit(this.rFoot, ra, 0.5);
     
     Engine.update(this.engine, 1000 / 60);
     const state = this.getState();
