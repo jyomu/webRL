@@ -1,18 +1,25 @@
 /**
  * Main Application Logic
  * Handles UI, rendering, and coordination between components
+ * @typedef {import('@tensorflow/tfjs').Sequential} Sequential
  */
 
+/** @type {(id: string) => HTMLElement | null} */
 const $ = id => document.getElementById(id);
+/** @type {(id: string) => number} */
 const P = id => parseFloat($(id).value);
 
 // Helper function for environment
 window.getParameter = P;
 
 const canvas = $('sim');
+if (!canvas) {
+  throw new Error('Canvas element #sim not found');
+}
 const ctx = canvas.getContext('2d');
 
 // Worker must be declared before any code that might call sendParams()
+/** @type {Worker | null} */
 let worker = null;
 let workerReady = false;
 
@@ -30,8 +37,28 @@ document.querySelectorAll('.row').forEach(row => {
 });
 
 // Initialize
-let policy = createPolicy();
-let biped = new Biped();
+/** @type {Sequential | null} */
+let policy = null;
+/** @type {Biped | null} */
+let biped = null;
+
+// Check if required libraries are loaded
+if (typeof tf === 'undefined' || typeof Matter === 'undefined') {
+  const errorMsg = 'Required libraries not loaded. TensorFlow.js and Matter.js are needed from CDN.';
+  console.error(errorMsg);
+  log('❌ ' + errorMsg);
+  log('ℹ️ In a real browser environment, these libraries will load from CDN automatically.');
+} else {
+  try {
+    policy = createPolicy();
+    biped = new Biped();
+    log('✅ Application initialized successfully');
+  } catch (error) {
+    console.error('Initialization error:', error);
+    log('❌ Initialization failed: ' + error.message);
+  }
+}
+
 let training = false;
 let testing = false;
 let speedMult = 1;
@@ -45,16 +72,37 @@ let lastT = performance.now();
 let fps = 0;
 let bestTraj = null;
 
+/**
+ * Initialize the Web Worker for training
+ * @throws {Error} If worker script is not loaded
+ */
 function initWorker() {
-  const workerCode = document.getElementById('workerScript').textContent;
-  const blob = new Blob([workerCode], { type: 'application/javascript' });
-  worker = new Worker(URL.createObjectURL(blob));
-  setupWorkerHandlers();
-  worker.postMessage({ type: 'init' });
-  sendParams();
+  try {
+    const workerScriptEl = document.getElementById('workerScript');
+    if (!workerScriptEl || !workerScriptEl.textContent) {
+      throw new Error('Worker script not loaded');
+    }
+    const workerCode = workerScriptEl.textContent;
+    const blob = new Blob([workerCode], { type: 'application/javascript' });
+    worker = new Worker(URL.createObjectURL(blob));
+    setupWorkerHandlers();
+    worker.postMessage({ type: 'init' });
+    sendParams();
+    log('✅ Worker initialized');
+  } catch (error) {
+    console.error('Worker initialization failed:', error);
+    log('❌ Worker initialization failed: ' + error.message);
+  }
 }
 
 function setupWorkerHandlers() {
+  if (!worker) return;
+  
+  worker.onerror = (error) => {
+    console.error('Worker error:', error);
+    log('❌ Worker error: ' + error.message);
+  };
+  
   worker.onmessage = (e) => {
   const { type, data } = e.data;
   if (type === 'ready') {
@@ -129,16 +177,20 @@ function log(m) {
 function updateUI() {
   $('mEp').textContent = episode;
   $('mR').textContent = totReward.toFixed(1);
-  $('mD').textContent = biped.dist().toFixed(0);
-  $('mS').textContent = training ? '学習' : testing ? 'テスト' : biped.fallen ? '転倒' : '実行';
+  $('mD').textContent = biped ? biped.dist().toFixed(0) : '0';
+  $('mS').textContent = !biped ? '未初期化' : training ? '学習' : testing ? 'テスト' : biped.fallen ? '転倒' : '実行';
   $('mL').textContent = lastLoss.toFixed(4);
   $('mF').textContent = fps;
 
-  const st = biped.getState();
-  const nm = ['θ', 'ω', 'pθ', 'vx', 'vy', 'h', 'Lc', 'Rc', 'Lh', 'Lk', 'La', 'Lhv', 'Lkv', 'Rh', 'Rk', 'Ra', 'Rhv', 'Rkv'];
-  let html = st.map((v, i) => `<div>${nm[i]}:${v.toFixed(1)}</div>`).join('');
-  html += curActions.map((v, i) => `<div style="color:#0ff">${['LH', 'LK', 'LA', 'RH', 'RK', 'RA'][i]}:${v.toFixed(2)}</div>`).join('');
-  $('stateGrid').innerHTML = html;
+  if (biped) {
+    const st = biped.getState();
+    const nm = ['θ', 'ω', 'pθ', 'vx', 'vy', 'h', 'Lc', 'Rc', 'Lh', 'Lk', 'La', 'Lhv', 'Lkv', 'Rh', 'Rk', 'Ra', 'Rhv', 'Rkv'];
+    let html = st.map((v, i) => `<div>${nm[i]}:${v.toFixed(1)}</div>`).join('');
+    html += curActions.map((v, i) => `<div style="color:#0ff">${['LH', 'LK', 'LA', 'RH', 'RK', 'RA'][i]}:${v.toFixed(2)}</div>`).join('');
+    $('stateGrid').innerHTML = html;
+  } else {
+    $('stateGrid').innerHTML = '<div style="grid-column: 1/-1">システム未初期化</div>';
+  }
 }
 
 function drawChart() {
@@ -172,17 +224,26 @@ function render() {
   canvas.height = canvas.offsetHeight;
   ctx.fillStyle = '#1a2a1a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  biped.render(ctx, canvas.width, canvas.height);
-  ctx.fillStyle = '#fff';
-  ctx.font = '12px monospace';
-  ctx.fillText(`EP:${episode} R:${totReward.toFixed(1)} D:${biped.dist().toFixed(0)} Step:${stepCount}`, 10, 18);
-  if (training) {
-    ctx.fillStyle = '#4f4';
-    ctx.fillText('● LEARNING (Worker)', 10, 34);
-  }
-  if (testing) {
-    ctx.fillStyle = '#48f';
-    ctx.fillText('● TESTING', 10, 34);
+  
+  if (biped) {
+    biped.render(ctx, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px monospace';
+    ctx.fillText(`EP:${episode} R:${totReward.toFixed(1)} D:${biped.dist().toFixed(0)} Step:${stepCount}`, 10, 18);
+    if (training) {
+      ctx.fillStyle = '#4f4';
+      ctx.fillText('● LEARNING (Worker)', 10, 34);
+    }
+    if (testing) {
+      ctx.fillStyle = '#48f';
+      ctx.fillText('● TESTING', 10, 34);
+    }
+  } else {
+    // Show error state
+    ctx.fillStyle = '#f44';
+    ctx.font = '14px monospace';
+    ctx.fillText('⚠️ System not initialized', 10, 24);
+    ctx.fillText('Check console for details', 10, 44);
   }
 }
 
@@ -199,6 +260,14 @@ function mainLoop() {
   const now = performance.now();
   fps = Math.round(1000 / (now - lastT));
   lastT = now;
+
+  // Skip simulation if not properly initialized
+  if (!policy || !biped) {
+    render();
+    updateUI();
+    requestAnimationFrame(mainLoop);
+    return;
+  }
 
   // Best trajectory replay mode
   if (training && bestTraj && bestTraj.length > 0) {
@@ -240,12 +309,21 @@ function mainLoop() {
 
 // Button handlers
 $('btnTrain').onclick = () => {
+  if (!policy || !biped || !workerReady) {
+    log('❌ Cannot start training: System not ready');
+    if (!policy) log('  - Policy not initialized');
+    if (!biped) log('  - Environment not initialized');
+    if (!workerReady) log('  - Worker not ready');
+    return;
+  }
+  
   training = !training;
   testing = false;
   $('btnTrain').textContent = training ? '学習停止' : '学習開始';
   $('btnTrain').className = training ? 'stop' : '';
   $('btnTest').className = '';
   if (training) {
+    log('🚀 Training started');
     biped.reset();
     stepCount = 0;
     totReward = 0;
@@ -254,6 +332,8 @@ $('btnTrain').onclick = () => {
     sendParams();
     syncWeightsToWorker();
     setTimeout(startTrainStep, 100);
+  } else {
+    log('⏸️ Training paused');
   }
 };
 

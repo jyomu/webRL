@@ -1,0 +1,36 @@
+{
+  "name": "webrl",
+  "version": "1.0.0",
+  "description": "Web-based Reinforcement Learning experiments",
+  "private": true,
+  "scripts": {
+    "lint": "eslint js/**/*.js",
+    "lint:fix": "eslint js/**/*.js --fix",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/matter-js": "^0.19.6",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "eslintConfig": {
+    "env": {
+      "browser": true,
+      "es2021": true,
+      "worker": true
+    },
+    "extends": "eslint:recommended",
+    "parserOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+      "no-undef": "error"
+    },
+    "globals": {
+      "tf": "readonly",
+      "Matter": "readonly"
+    }
+  }
+}

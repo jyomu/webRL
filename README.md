@@ -17,6 +17,27 @@ This repository provides a browser-based environment for experimenting with rein
 
 Simply open `index.html` in a modern web browser. No build step or dependencies installation required.
 
+### Development
+
+For development with type checking and linting:
+
+```bash
+# Install development dependencies (optional)
+npm install
+
+# Run static analysis
+npm run lint        # Check code with ESLint
+npm run typecheck   # Check types with TypeScript
+
+# Fix linting issues automatically
+npm run lint:fix
+```
+
+The codebase uses **JSDoc type annotations** for type safety without requiring a build step. This provides:
+- Type checking via TypeScript in check-only mode
+- IDE autocomplete and inline documentation
+- Static analysis without compilation
+
 ## Architecture
 
 The codebase is organized into modular components for maintainability. See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the project structure and design principles.

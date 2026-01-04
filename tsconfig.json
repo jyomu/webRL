@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM", "WebWorker"],
+    "strict": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "js/**/*.js"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
