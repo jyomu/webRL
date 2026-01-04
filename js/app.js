@@ -36,6 +36,16 @@ document.querySelectorAll('.row').forEach(row => {
   inp.oninput();
 });
 
+// Setup physics mode selector
+const physicsModeSelect = document.getElementById('physicsMode');
+if (physicsModeSelect) {
+  physicsModeSelect.onchange = () => {
+    sendParams();
+    log(`🔧 物理モード: ${physicsModeSelect.value === 'direct' ? '直接制御' : '力ベース'}`);
+  };
+}
+
+
 // Initialize
 /** @type {Sequential | null} */
 let policy = null;
@@ -147,9 +157,10 @@ function syncWeightsToWorker() {
 
 function sendParams() {
   if (!worker) return;
+  const physicsMode = document.getElementById('physicsMode') ? document.getElementById('physicsMode').value : 'direct';
   const p = {
     rVel: P('rVel'), rUp: P('rUp'), rH: P('rH'), rEff: P('rEff'), rFall: P('rFall'),
-    torque: P('torque'), friction: P('friction')
+    torque: P('torque'), friction: P('friction'), physicsMode
   };
   worker.postMessage({ type: 'params', data: p });
 }
@@ -261,9 +272,10 @@ function render() {
 }
 
 function getParams() {
+  const physicsMode = document.getElementById('physicsMode') ? document.getElementById('physicsMode').value : 'direct';
   return {
     rVel: P('rVel'), rUp: P('rUp'), rH: P('rH'), rEff: P('rEff'), rFall: P('rFall'),
-    torque: P('torque'), friction: P('friction')
+    torque: P('torque'), friction: P('friction'), physicsMode
   };
 }
 

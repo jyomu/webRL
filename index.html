@@ -20,9 +20,9 @@
 
 <div class="sec">
 <h3>GRPO</h3>
-<div class="row"><label>グループ</label><input type="range" id="groupSize" min="8" max="64" value="24"><span>24</span></div>
-<div class="row"><label>学習率</label><input type="range" id="lr" min="-4" max="-1" step="0.1" value="-2.5"><span>3e-3</span></div>
-<div class="row"><label>エントロピー</label><input type="range" id="entropy" min="0" max="0.1" step="0.005" value="0.02"><span>0.02</span></div>
+<div class="row"><label>グループ</label><input type="range" id="groupSize" min="8" max="64" value="16"><span>16</span></div>
+<div class="row"><label>学習率</label><input type="range" id="lr" min="-4" max="-1" step="0.1" value="-3"><span>1e-3</span></div>
+<div class="row"><label>エントロピー</label><input type="range" id="entropy" min="0" max="0.1" step="0.005" value="0.01"><span>0.01</span></div>
 <div class="row"><label>EP長</label><input type="range" id="epLen" min="100" max="500" step="20" value="200"><span>200</span></div>
 </div>
 
@@ -37,7 +37,8 @@
 
 <div class="sec">
 <h3>物理</h3>
-<div class="row"><label>トルク</label><input type="range" id="torque" min="0.02" max="0.15" step="0.01" value="0.06"><span>0.06</span></div>
+<div class="row"><label>物理モード</label><select id="physicsMode"><option value="direct">直接制御</option><option value="force">力ベース</option></select></div>
+<div class="row"><label>トルク</label><input type="range" id="torque" min="0.02" max="0.15" step="0.01" value="0.05"><span>0.05</span></div>
 <div class="row"><label>摩擦</label><input type="range" id="friction" min="0.5" max="1.5" step="0.1" value="1.0"><span>1.0</span></div>
 </div>
 

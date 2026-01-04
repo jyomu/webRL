@@ -42,18 +42,19 @@ class Biped {
     this.rShin = Bodies.rectangle(x + 8, gy - 18, 12, 38, { friction, density: 0.001, label: 'rShin' });
     this.rFoot = Bodies.rectangle(x + 8, gy - 2, 22, 6, { friction: friction * 1.5, density: 0.001, label: 'rFoot' });
 
-    // Joints
-    const stiff = 0.95;
-    this.neck = Constraint.create({ bodyA: this.head, pointA: { x: 0, y: 10 }, bodyB: this.torso, pointB: { x: 0, y: -20 }, stiffness: stiff, length: 0 });
-    this.spine = Constraint.create({ bodyA: this.torso, pointA: { x: 0, y: 20 }, bodyB: this.pelvis, pointB: { x: 0, y: -6 }, stiffness: stiff, length: 0 });
+    // Joints - Higher stiffness and damping to prevent joint disconnection
+    const stiff = 1.0;
+    const damp = 0.1;
+    this.neck = Constraint.create({ bodyA: this.head, pointA: { x: 0, y: 10 }, bodyB: this.torso, pointB: { x: 0, y: -20 }, stiffness: stiff, damping: damp, length: 0 });
+    this.spine = Constraint.create({ bodyA: this.torso, pointA: { x: 0, y: 20 }, bodyB: this.pelvis, pointB: { x: 0, y: -6 }, stiffness: stiff, damping: damp, length: 0 });
 
-    this.lHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: -6, y: 6 }, bodyB: this.lThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, length: 0 });
-    this.lKnee = Constraint.create({ bodyA: this.lThigh, pointA: { x: 0, y: 18 }, bodyB: this.lShin, pointB: { x: 0, y: -16 }, stiffness: stiff, length: 0 });
-    this.lAnkle = Constraint.create({ bodyA: this.lShin, pointA: { x: 0, y: 16 }, bodyB: this.lFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, length: 0 });
+    this.lHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: -6, y: 6 }, bodyB: this.lThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, damping: damp, length: 0 });
+    this.lKnee = Constraint.create({ bodyA: this.lThigh, pointA: { x: 0, y: 18 }, bodyB: this.lShin, pointB: { x: 0, y: -16 }, stiffness: stiff, damping: damp, length: 0 });
+    this.lAnkle = Constraint.create({ bodyA: this.lShin, pointA: { x: 0, y: 16 }, bodyB: this.lFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, damping: damp, length: 0 });
 
-    this.rHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: 6, y: 6 }, bodyB: this.rThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, length: 0 });
-    this.rKnee = Constraint.create({ bodyA: this.rThigh, pointA: { x: 0, y: 18 }, bodyB: this.rShin, pointB: { x: 0, y: -16 }, stiffness: stiff, length: 0 });
-    this.rAnkle = Constraint.create({ bodyA: this.rShin, pointA: { x: 0, y: 16 }, bodyB: this.rFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, length: 0 });
+    this.rHip = Constraint.create({ bodyA: this.pelvis, pointA: { x: 6, y: 6 }, bodyB: this.rThigh, pointB: { x: 0, y: -18 }, stiffness: stiff, damping: damp, length: 0 });
+    this.rKnee = Constraint.create({ bodyA: this.rThigh, pointA: { x: 0, y: 18 }, bodyB: this.rShin, pointB: { x: 0, y: -16 }, stiffness: stiff, damping: damp, length: 0 });
+    this.rAnkle = Constraint.create({ bodyA: this.rShin, pointA: { x: 0, y: 16 }, bodyB: this.rFoot, pointB: { x: 0, y: 0 }, stiffness: stiff, damping: damp, length: 0 });
 
     Composite.add(this.world, [
       this.ground, this.head, this.torso, this.pelvis,
@@ -105,12 +106,61 @@ class Biped {
     const tq = params.torque;
     const [lh, lk, la, rh, rk, ra] = actions;
 
-    Body.setAngularVelocity(this.lThigh, this.lThigh.angularVelocity + lh * tq);
-    Body.setAngularVelocity(this.lShin, this.lShin.angularVelocity + lk * tq);
-    Body.setAngularVelocity(this.lFoot, this.lFoot.angularVelocity + la * tq * 0.5);
-    Body.setAngularVelocity(this.rThigh, this.rThigh.angularVelocity + rh * tq);
-    Body.setAngularVelocity(this.rShin, this.rShin.angularVelocity + rk * tq);
-    Body.setAngularVelocity(this.rFoot, this.rFoot.angularVelocity + ra * tq * 0.5);
+    // Get physics mode from params (default to 'direct' for backward compatibility)
+    const physicsMode = params.physicsMode || 'direct';
+    
+    // Apply torque with gentle limits to prevent extreme movements while maintaining natural motion
+    const MAX_ANGULAR_VELOCITY = 0.5; // rad/s - Prevents unrealistic fast rotations
+    
+    if (physicsMode === 'force') {
+      // Force-based mode: Apply forces at constraint points for more realistic joint rotation
+      const applyForceAtJoint = (body, action, jointPoint, multiplier = 1.0) => {
+        // Calculate perpendicular force direction for rotation
+        const angle = body.angle + Math.PI / 2;
+        const forceDirection = { x: Math.cos(angle), y: Math.sin(angle) };
+        const forceMagnitude = action * tq * multiplier * 0.001; // Scale down for force-based
+        
+        // Apply force at joint point offset from center
+        const forcePoint = {
+          x: body.position.x + jointPoint.x * Math.cos(body.angle) - jointPoint.y * Math.sin(body.angle),
+          y: body.position.y + jointPoint.x * Math.sin(body.angle) + jointPoint.y * Math.cos(body.angle)
+        };
+        
+        Body.applyForce(body, forcePoint, {
+          x: forceDirection.x * forceMagnitude,
+          y: forceDirection.y * forceMagnitude
+        });
+        
+        // Still apply velocity limit
+        if (Math.abs(body.angularVelocity) > MAX_ANGULAR_VELOCITY) {
+          Body.setAngularVelocity(body, Math.sign(body.angularVelocity) * MAX_ANGULAR_VELOCITY);
+        }
+      };
+      
+      // Apply forces at joint attachment points
+      applyForceAtJoint(this.lThigh, lh, { x: 0, y: -18 });
+      applyForceAtJoint(this.lShin, lk, { x: 0, y: -16 });
+      applyForceAtJoint(this.lFoot, la, { x: 0, y: 0 }, 0.5);
+      applyForceAtJoint(this.rThigh, rh, { x: 0, y: -18 });
+      applyForceAtJoint(this.rShin, rk, { x: 0, y: -16 });
+      applyForceAtJoint(this.rFoot, ra, { x: 0, y: 0 }, 0.5);
+    } else {
+      // Direct mode (default): Direct angular velocity manipulation
+      const applyTorqueWithLimit = (body, action, multiplier = 1.0) => {
+        // Calculate new angular velocity (similar to original but with limits)
+        const newAngVel = body.angularVelocity + action * tq * multiplier;
+        // Clamp to prevent extreme rotations
+        const clampedVel = Math.max(-MAX_ANGULAR_VELOCITY, Math.min(MAX_ANGULAR_VELOCITY, newAngVel));
+        Body.setAngularVelocity(body, clampedVel);
+      };
+      
+      applyTorqueWithLimit(this.lThigh, lh);
+      applyTorqueWithLimit(this.lShin, lk);
+      applyTorqueWithLimit(this.lFoot, la, 0.5);
+      applyTorqueWithLimit(this.rThigh, rh);
+      applyTorqueWithLimit(this.rShin, rk);
+      applyTorqueWithLimit(this.rFoot, ra, 0.5);
+    }
 
     Engine.update(this.engine, 1000 / 60);
     this.steps++;
